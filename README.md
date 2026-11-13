@@ -5,154 +5,169 @@
 [![PowerShell 7.2+](https://img.shields.io/badge/PowerShell-7.2%2B-5391FE)](https://github.com/PowerShell/PowerShell)
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-orange)](https://rustup.rs)
 
-**Um prompt minimalista para PowerShell, com o Git dentro do processo — não um processo por prompt.**
+ohmyrushell is a minimal PowerShell prompt with a Rust core. It reads Git status
+inside the shell process through libgit2, so it doesn't need to start a Git
+process for each prompt.
 
-Núcleo em Rust, status Git via libgit2, paleta Catppuccin Mocha e visual inspirado
-no Oh My Zsh. Sem Nerd Font, Powerline, daemon ou runtime Node/Python.
+The look takes inspiration from Oh My Zsh and uses the Catppuccin Mocha palette.
+You don't need a Nerd Font, Powerline, a daemon, or a Node/Python runtime.
 
 ```text
 ~/workspace/meu-projeto  git:(main) ✗ ↑2
 ❯ git status
 ```
 
-- **Git atualizado:** branch, alterações, conflitos e ahead/behind consultados a cada prompt, sem loading ou redesenho por idle.
-- **Comandos com validação:** existentes em verde, inexistentes em vermelho; argumentos não são executados para validar a entrada.
-- **`ls` familiar:** cores, colunas, `-a`, `-l` e `-h`, sem iniciar outro processo.
-- **Instalação por usuário:** sem administrador; perfil só muda com sua autorização.
-- **Atualizações lado a lado:** não sobrescrevem DLLs carregadas por outras sessões.
+- Git status is checked at every prompt, including the branch, changes, conflicts,
+  and ahead/behind counts. There's no loading indicator or idle redraw.
+- Commands appear in green when found and red when missing. Validation doesn't
+  execute your input or its arguments.
+- A built-in `ls` adds colors, columns, and familiar flags such as `-a`, `-l`, and
+  `-h`, without starting another process.
+- Installation is per user, with no administrator access needed. The installer
+  only changes your profile if you ask it to.
+- Updates install side by side, leaving DLLs loaded by other sessions alone.
 
-## Instalação
+## Installation
 
-### 1. Prepare o ambiente
+<a id="1-prepare-o-ambiente"></a>
 
-Use **PowerShell 7.2+ (`pwsh`)**, não Windows PowerShell 5.1. No Windows,
-recomendamos Windows Terminal. Esta versão é instalada **a partir do código-fonte**:
-não há download automático de binários nem publicação no PowerShell Gallery.
+### 1. Check the requirements
 
-| Dependência | Como obter |
+Use PowerShell 7.2+ (`pwsh`). Windows PowerShell 5.1 isn't supported. On Windows,
+we recommend Windows Terminal.
+
+You'll need to build this version from source. The installer doesn't download
+prebuilt binaries, and the module isn't published on the PowerShell Gallery.
+
+| Dependency | Where to get it |
 |---|---|
-| PowerShell 7.2+ | [Instruções oficiais](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) |
-| Git | [git-scm.com](https://git-scm.com/downloads) — para clonar e executar os testes |
-| Rust 1.88+ | [rustup.rs](https://rustup.rs) — toolchain da mesma arquitetura do `pwsh` |
-| Compilador C/linker | Windows: [Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), workload **Desktop development with C++** (MSVC + Windows SDK). Linux: `build-essential`/equivalente e `pkg-config`. macOS: `xcode-select --install`. |
+| PowerShell 7.2+ | [Official installation guide](https://learn.microsoft.com/powershell/scripting/install/installing-powershell) |
+| Git | [git-scm.com](https://git-scm.com/downloads), for cloning the repository and running tests |
+| Rust 1.88+ | [rustup.rs](https://rustup.rs). Use a toolchain that matches your `pwsh` architecture. |
+| C compiler/linker | Windows: [Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload (MSVC + Windows SDK). Linux: `build-essential` or equivalent, plus `pkg-config`. macOS: `xcode-select --install`. |
 
-O primeiro build compila também libgit2/zlib e pode levar alguns minutos.
-Depois de instalado, o prompt **não precisa de Rust, Cargo ou `git.exe` no PATH**.
-A validação local inicial foi feita no Windows; o CI também exercita Linux/macOS.
+The first build also compiles libgit2/zlib and may take a few minutes. Once
+installed, the prompt doesn't need Rust, Cargo, or `git.exe` on your PATH.
+Initial local testing was done on Windows; CI also runs on Linux and macOS.
 
-### 2. Clone, confira e instale
+### 2. Clone and install
 
-Execute em um terminal **PowerShell**:
+Run these commands in PowerShell:
 
 ```powershell
 git clone https://github.com/ChristoferMendes/ohmyrushell.git
 cd ohmyrushell
-./install.ps1 -Check          # Diagnóstico sem alterar arquivos
-./install.ps1 -AddToProfile   # Compila, instala e habilita em novas sessões
+./install.ps1 -Check          # Check requirements without changing files
+./install.ps1 -AddToProfile   # Build, install, and enable in future sessions
 ```
 
-Abra uma **nova aba do PowerShell**. Remova do `$PROFILE` inicializações de
-Oh My Posh/Starship/outros prompts para evitar conflitos.
+Open a new PowerShell tab to use the prompt. Remove any Oh My Posh, Starship, or
+other prompt initialization from `$PROFILE` to avoid conflicts.
 
-Prefere experimentar primeiro? Sem mudar o perfil:
+To try it without changing your profile:
 
 ```powershell
 ./install.ps1
 Import-Module ohmyrushell
-# Para restaurar o prompt e o alias ls da sessão:
+# Restore the session's previous prompt and ls alias:
 Disable-OhMyRushell
 ```
 
-O instalador mostra o caminho exato de importação — use-o se sua pasta de módulos
-não estiver em `$env:PSModulePath`. Não executamos scripts remotos via `iex`.
+The installer prints the exact import path. Use that path if your module folder
+isn't in `$env:PSModulePath`. Installation doesn't run remote scripts through `iex`.
 
-### Opções úteis
+### Installer options
 
 ```powershell
 Get-Help ./install.ps1 -Detailed
-./install.ps1 -NoBuild                    # Reutiliza target/release; não exige Rust
-./install.ps1 -NoBuild -Check             # Confere módulo e biblioteca existentes
-./install.ps1 -AddToProfile -WhatIf       # Simula, sem build, cópias ou mudanças no perfil
-./install.ps1 -Destination ./sandbox/ohmyrushell  # Instalação em diretório customizado
+./install.ps1 -NoBuild                    # Reuse target/release; no Rust needed
+./install.ps1 -NoBuild -Check             # Check the existing module and library
+./install.ps1 -AddToProfile -WhatIf       # Preview without building, copying, or editing the profile
+./install.ps1 -Destination ./sandbox/ohmyrushell  # Install to a custom directory
 ```
 
-Por padrão, o módulo vai para `Documents/PowerShell/Modules/ohmyrushell` no
-Windows (respeitando a pasta Documentos do sistema) ou
-`~/.local/share/powershell/Modules/ohmyrushell` no Linux/macOS.
-`-AddToProfile` edita somente `$PROFILE.CurrentUserCurrentHost`, faz backup de
-conteúdo existente em `$PROFILE.ohmyrushell.bak` e não duplica a linha gerada.
+By default, the module goes into `Documents/PowerShell/Modules/ohmyrushell` on
+Windows, using the system's Documents folder location, or
+`~/.local/share/powershell/Modules/ohmyrushell` on Linux and macOS.
 
-### Atualizar ou remover
+`-AddToProfile` only edits `$PROFILE.CurrentUserCurrentHost`. It backs up existing
+content to `$PROFILE.ohmyrushell.bak` and won't add the generated import line twice.
+
+### Updating or removing
 
 ```powershell
 cd ohmyrushell
 git pull --ff-only
-./install.ps1              # Use -AddToProfile se ainda não habilitou no perfil
+./install.ps1              # Add -AddToProfile if you haven't enabled it in your profile
 ```
 
-Não é necessário fechar as outras sessões para instalar. Cada pacote fica em
-`releases/<hash>/`; o manifesto estável passa a apontar para a nova versão.
-**Abra uma nova sessão para usá-la.** `Import-Module -Force` não descarrega a DLL.
-Releases antigas são mantidas: só as remova depois de fechar as sessões em uso.
+You can leave other sessions open during installation. Each release lives in
+`releases/<hash>/`, and the stable manifest points to the newly installed version.
+Open a new session to load it: `Import-Module -Force` doesn't unload the native DLL.
+Old releases stay on disk; only remove them after closing the sessions using them.
 
-Para desativar agora: `Disable-OhMyRushell` ou `Remove-Module ohmyrushell`.
-Para desinstalar, remova a linha de importação do `$PROFILE`, feche as sessões
-que carregaram o módulo e apague **apenas a pasta `ohmyrushell`** indicada pelo
-instalador. Nunca apague a pasta inteira de módulos do PowerShell.
+To turn the module off in the current session, run `Disable-OhMyRushell` or
+`Remove-Module ohmyrushell`.
 
-## O que o prompt mostra
+To uninstall, remove the import line from `$PROFILE`, close any sessions that
+loaded the module, and delete only the `ohmyrushell` folder shown by the installer.
+Don't delete the entire PowerShell modules folder.
 
-| Indicador | Significado |
+## Reading the prompt
+
+| Indicator | Meaning |
 |---|---|
-| `git:(main)` | Branch atual, inclusive antes do primeiro commit |
-| `git:(@12ab34cd)` | HEAD destacado |
-| `✗` amarelo | Staging, alterações, arquivos não rastreados ou conflitos |
-| `!` vermelho | Erro de consulta; não é apresentado como repositório limpo |
-| `↑N` / `↓N` | Commits à frente/atrás do upstream conhecido localmente |
-| `❯` verde/vermelho | Sucesso/falha do último comando |
+| `git:(main)` | Current branch, including before the first commit |
+| `git:(@12ab34cd)` | Detached HEAD |
+| Yellow `✗` | Staged changes, working-tree changes, untracked files, or conflicts |
+| Red `!` | Git status lookup failed; the repository isn't shown as clean |
+| `↑N` / `↓N` | Commits ahead of or behind the locally known upstream |
+| Green/red `❯` | The last command succeeded/failed |
 
-Não faz `fetch` nem acessa a rede. Fora de um repositório, mostra apenas o caminho.
-`NO_COLOR` desliga as cores do prompt Rust; PSReadLine tem configuração separada.
-O realce usa um índice de comandos: pode ficar temporariamente desatualizado.
-Para atualizar: `Update-OhMyRushellCommandCache`.
+The prompt never runs `fetch` or accesses the network. Outside a repository, it
+shows just the path.
 
-### `ls` no estilo Linux
+`NO_COLOR` turns off colors in the Rust prompt. PSReadLine has its own color
+settings. Command highlighting uses an index that can briefly fall out of date;
+run `Update-OhMyRushellCommandCache` to refresh it.
+
+### Linux-style `ls`
 
 ```powershell
-ls                 # Pastas primeiro, cores e colunas no terminal
-ls -lah            # Ocultos, detalhes e tamanhos legíveis
-ls -1 ./src        # Um nome por linha
+ls                 # Directories first, with colors and columns in the terminal
+ls -lah            # Hidden entries, details, and human-readable sizes
+ls -1 ./src        # One name per line
 ls --help
 ```
 
-Somente o alias `ls` é trocado, e restaurado ao desativar o módulo. A saída é
-**texto formatado**, não objetos. Para pipelines de objetos ou `-Recurse`, use
-`Get-ChildItem`/`gci`. Não é uma implementação completa do GNU ls.
+The module replaces only the `ls` alias and restores it when disabled. Output is
+formatted text. Use `Get-ChildItem`/`gci` when you need objects in a pipeline or
+`-Recurse`. This isn't a full implementation of GNU ls.
 
-## Solução de problemas
+## Troubleshooting
 
-| Sintoma | Ação |
+| Problem | What to try |
 |---|---|
-| Script bloqueado no Windows | Confira `Get-ExecutionPolicy -List`. Se permitido pela sua política, use `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Não burle políticas da organização. |
-| `cargo`/`rustc` não encontrado | Instale Rust e abra uma nova sessão; rode `./install.ps1 -Check`. |
-| Erro de linker/build | Confira C++ Build Tools/MSVC + SDK no Windows, ou compilador C na sua plataforma. Veja a saída do Cargo. |
-| DLL ausente/incompatível | Execute `./install.ps1` na mesma plataforma/arquitetura do `pwsh`. `cargo install` sozinho não instala o módulo. |
-| DLL bloqueada ao recompilar | Se importou direto do projeto, feche a sessão que carregou `target/release`. A instalação normal usa releases imutáveis. |
-| Outra versão já carregada | Abra uma nova sessão; não há hot reload nativo. |
-| Git mostra `!` | Rode `./target/release/ohmyrushell.exe git-status .` (sem `.exe` no Unix). |
+| Windows blocks the script | Check `Get-ExecutionPolicy -List`. If your policy allows it, use `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Don't bypass your organization's policies. |
+| `cargo`/`rustc` not found | Install Rust, open a new session, and run `./install.ps1 -Check`. |
+| Linker or build error | Check that C++ Build Tools/MSVC + SDK are installed on Windows, or that a C compiler is available on your platform. Read the Cargo output for details. |
+| Missing or incompatible DLL | Run `./install.ps1` on the same platform and architecture as `pwsh`. Running `cargo install` alone doesn't install the PowerShell module. |
+| DLL locked during a rebuild | If you imported directly from the checkout, close the session that loaded `target/release`. Normal installation uses immutable releases to avoid this. |
+| Another version is already loaded | Open a new session. Native hot reload isn't supported. |
+| Git shows `!` | Run `./target/release/ohmyrushell.exe git-status .` (omit `.exe` on Unix). |
 
-## Desenvolvimento
+## Development
 
 ```powershell
-./scripts/test.ps1   # fmt + clippy + testes Rust + build release + testes PowerShell
+./scripts/test.ps1   # fmt + clippy + Rust tests + release build + PowerShell tests
 ```
 
-Veja [CONTRIBUTING.md](CONTRIBUTING.md) para testes individuais e importação
-local, e [notas técnicas](docs/architecture.md) para arquitetura, limitações,
-cache, realce e migração do nome anterior.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for individual tests and importing from a
+local checkout. The [architecture notes](docs/architecture.md) cover limitations,
+caching, command highlighting, and migration from the project's previous name.
 
-## Licença
+## License
 
-[MIT](LICENSE). Usa [git2-rs](https://github.com/rust-lang/git2-rs) e
-[libgit2](https://libgit2.org/), distribuída sob GPLv2 com exceção de linking.
-As dependências mantêm suas próprias licenças.
+[MIT](LICENSE). The project uses [git2-rs](https://github.com/rust-lang/git2-rs) and
+[libgit2](https://libgit2.org/). libgit2 is distributed under GPLv2 with a linking
+exception. Dependencies retain their own licenses.
