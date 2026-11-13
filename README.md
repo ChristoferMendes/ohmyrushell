@@ -156,6 +156,34 @@ formatted text. Use `Get-ChildItem`/`gci` when you need objects in a pipeline or
 | Another version is already loaded | Open a new session. Native hot reload isn't supported. |
 | Git shows `!` | Run `./target/release/ohmyrushell.exe git-status .` (omit `.exe` on Unix). |
 
+## Startup and performance
+
+Installation compiles and includes the .NET bridges, so the first tab doesn't
+need to run the compiler. Available commands are discovered in the background;
+Git status stays fresh and synchronous, with one prompt and no loading or redraw.
+Colors, `ls`, aliases, custom key bindings, and predictions are preserved.
+Unresolved names stay neutral until discovery completes.
+
+To compare real PSReadLine sessions on Windows without changing profiles or history:
+
+```powershell
+python ./tests/benchmark-startup.py --iterations 15 --output target/startup.json
+# To measure an installation, add: --module C:/path/to/ohmyrushell.psd1
+```
+
+The test alternates native sessions and sessions with all features enabled,
+measures the first prompt and first accepted input, then checks the indexes.
+It excludes your profile, zoxide, and the time to open a Windows Terminal window.
+To measure Git and warmed-up prompts on any platform:
+
+```powershell
+pwsh -NoProfile -File ./tests/benchmark-git.ps1 -Path ./
+```
+
+Extra features still have a cost: there's no promise to outperform an
+uncustomized shell. Compare median/p95 on the same machine, directory, and runtime.
+See the [local comparison and methodology](docs/startup-performance.md).
+
 ## Development
 
 ```powershell

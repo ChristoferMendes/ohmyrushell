@@ -37,15 +37,24 @@ do prompt ou do preview. Nenhum `fetch` é executado automaticamente.
 
 ## Cache das pontes .NET
 
-A primeira importação compila a ponte com `Add-Type` e armazena o assembly em:
+O instalador compila as pontes em um processo isolado e inclui o assembly em
+`native/managed/` da release imutável. Com PSReadLine, uma única DLL contém a
+ponte nativa e o realce. Abrir uma sessão não executa o compilador, mesmo com o
+cache do usuário vazio. As cores/teclas do processo que instala não são alteradas.
 
-- Windows: `%LOCALAPPDATA%/ohmyrushell/bridge`;
-- Unix: `$XDG_CACHE_HOME/ohmyrushell/bridge` ou `~/.cache/ohmyrushell/bridge`.
+A identidade inclui a versão principal do .NET e as versões de PSReadLine e
+System.Management.Automation. Se essas versões mudarem, ou ao importar direto
+do checkout, a compilação acontece uma vez com publicação atômica no cache:
 
-A chave inclui o código-fonte, caminho da DLL nativa e versão principal do .NET.
-Sessões seguintes reutilizam o assembly. A ponte de realce usa um cache separado
-em `ohmyrushell/highlighting`. Importação, carregamento de PSReadLine e primeira
-compilação são custos diferentes do prompt aquecido.
+- Windows: `%LOCALAPPDATA%/ohmyrushell/integration`;
+- Unix: `$XDG_CACHE_HOME/ohmyrushell/integration` ou `~/.cache/ohmyrushell/integration`.
+
+`OHMYRUSHELL_CACHE_HOME` permite escolher outra raiz de cache (útil nos testes).
+A chave inclui código e runtime, **não o caminho da release**: atualizações de
+scripts não obrigam a recompilar a ponte. Um resolver público .NET seleciona a
+DLL Rust da release atual e continua proibindo trocar a DLL na mesma sessão.
+Sem PSReadLine, a ponte nativa funciona sozinha (`ohmyrushell/bridge`).
+Importação, compilação, primeiro input e prompt aquecido são custos distintos.
 
 ## Validação de comandos
 
@@ -59,9 +68,16 @@ com APIs públicas, sem executar o texto digitado:
 Cada comando do pipeline é classificado separadamente. Argumentos não são
 validados como comandos: `git qualquer-coisa` verifica somente `git`.
 Não há `Get-Command`, processo externo ou varredura de PATH a cada tecla.
-Cmdlets/exports são descobertos na ativação; funções/aliases são atualizados a
-cada prompt. PATH/PATHEXT são indexados em background quando mudam e, durante
-prompts, no máximo a cada 30 segundos. Caminhos explícitos são verificados em
+Cmdlets/exports são descobertos em background em um runspace temporário próprio,
+sem bloquear o primeiro prompt e sem importar/executar os módulos descobertos.
+Funções/aliases da sessão são lidos a cada prompt pela API pública de comandos,
+sem pipeline PowerShell; nomes removidos não ficam em um cache persistente.
+PATH/PATHEXT são indexados em background quando mudam e, durante prompts, no
+máximo a cada 30 segundos. Enquanto qualquer descoberta está pendente, nomes
+não resolvidos ficam neutros, nunca vermelhos por ausência de informação.
+`Update-OhMyRushellCommandCache` continua fazendo o refresh explícito síncrono;
+sua resposta não é sobrescrita por uma descoberta antiga ainda em andamento.
+`WaitForIndex()` aguarda tanto o PATH quanto os exports. Caminhos explícitos são verificados em
 background; a cor muda na próxima edição, não em callbacks de idle.
 
 O realce interativo cobre a edição padrão Windows/Emacs no ConsoleHost com VT,
@@ -88,8 +104,9 @@ ls '--' '-nome.txt'   # Aspas: PowerShell consome um -- sem aspas
 ## Instalações imutáveis
 
 O instalador calcula SHA-256 do módulo completo e da biblioteca nativa, copia
-para staging, verifica o conteúdo e publica `releases/<hash>/`. O manifesto
-estável é publicado por último com rename atômico. Conteúdo idêntico é
+para staging, verifica o conteúdo e publica `releases/<hash>/`. As pontes compiladas também
+participam do hash. O módulo é validado em outro processo antes de publicar o
+manifesto estável por último com rename atômico. Conteúdo idêntico é
 reutilizado sem regravar DLLs; releases antigas não são removidas automaticamente.
 
 Isso também permite migrar instalações antigas que tinham a DLL diretamente em

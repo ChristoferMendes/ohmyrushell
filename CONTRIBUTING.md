@@ -42,6 +42,7 @@ pwsh -NoProfile -File ./tests/installer-preflight.ps1
 pwsh -NoProfile -File ./tests/smoke.ps1
 pwsh -NoProfile -File ./tests/listing.ps1
 pwsh -NoProfile -File ./tests/highlighting.ps1
+pwsh -NoProfile -File ./tests/startup.ps1
 pwsh -NoProfile -File ./tests/installer.ps1
 ```
 
@@ -50,6 +51,10 @@ pwsh -NoProfile -File ./tests/installer.ps1
   Compara o backend nativo com Git CLI e verifica que o índice não é regravado.
 - PowerShell: preservação de `$LASTEXITCODE`, cores, restauração do prompt/alias,
   listagem, realce sem execução da entrada e instalação com DLLs bloqueadas.
+- Startup: imports frios concorrentes, cache compartilhado entre releases,
+  instalação sem compilação na primeira sessão mesmo com cache vazio, exports
+  de módulos sem executar código, aliases/cores/atalhos/predições preservados
+  e fallback sem PSReadLine.
 - Instalador: diagnóstico/simulação sem efeitos colaterais, reinstalação,
   atualizações lado a lado, falhas e migração de perfil descartável.
 
@@ -67,10 +72,18 @@ temporário do teste. O log fica em `target/interactive-output.log`.
 
 ```powershell
 pwsh -NoProfile -File ./tests/benchmark-git.ps1 -Path ./
+# Windows/ConPTY: primeiro prompt + primeiro input real, nativo vs customizado
+python ./tests/benchmark-startup.py --iterations 15 --output target/startup.json
+# Comparação pareada adicional com um checkout/manifesto anterior:
+# --baseline-module C:/caminho/anterior/powershell/ohmyrushell.psd1
 ```
 
-O benchmark é somente leitura. Meça cold start, importação/compilação das pontes
-e prompt aquecido separadamente. Não trate uma medição local como garantia de
+O benchmark Git é somente leitura. O ConPTY usa uma pasta temporária vazia,
+sem perfis nem histórico, alterna a ordem das sessões e registra o primeiro run
+separadamente das amostras aquecidas. `index_check_ms` é a confirmação dos
+índices por um segundo comando (inclui edição/execução desse comando), não o
+instante exato da conclusão em background. Meça cold start, importação/compilação
+das pontes e prompt aquecido separadamente. Não trate uma medição local como garantia de
 latência ou comparação controlada com outros prompts.
 
 Veja [a arquitetura](docs/architecture.md) antes de alterar cache/FFI, consulta

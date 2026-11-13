@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -32,6 +33,10 @@ namespace OhMyRushell {
         private static HashSet<string> session = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static HashSet<string> available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static HashSet<string> external = new HashSet<string>(ExternalComparer);
+        private static volatile bool availableReady;
+        private static readonly object availableLock = new object();
+        private static int availableGeneration;
+        private static Task availableTask = Task.CompletedTask;
         private static volatile bool indexReady;
         private static string signature;
         private static string cwd = ".";
@@ -47,12 +52,42 @@ namespace OhMyRushell {
             public Action<ConsoleKeyInfo?, object> Original;
         }
         private static readonly List<Binding> bindings = new List<Binding>();
+        private static Hashtable originalColors;
 
-        private static HashSet<string> Names(CommandInfo[] commands, bool moduleOnly) {
+        public static void EnableColors() {
+            if (originalColors != null) return;
+            var options = PSConsoleReadLine.GetOptions();
+            var saved = new Hashtable {
+                { "Command", options.CommandColor }, { "Parameter", options.ParameterColor },
+                { "String", options.StringColor }, { "Variable", options.VariableColor },
+                { "Number", options.NumberColor }, { "Operator", options.OperatorColor },
+                { "Comment", options.CommentColor }, { "Keyword", options.KeywordColor },
+                { "Error", options.ErrorColor }, { "ContinuationPrompt", options.ContinuationPromptColor }
+            };
+            // Public PSReadLine API, identical neutral baseline and palette.
+            PSConsoleReadLine.SetOptions(new SetPSReadLineOption { Colors = new Hashtable {
+                { "Command", "#cdd6f4" }, { "Parameter", "#89b4fa" }, { "String", "#f9e2af" },
+                { "Variable", "#cba6f7" }, { "Number", "#fab387" }, { "Operator", "#89dceb" },
+                { "Comment", "#6c7086" }, { "Keyword", "#cba6f7" }, { "Error", "#f38ba8" },
+                { "ContinuationPrompt", "#6c7086" }
+            }});
+            originalColors = saved;
+        }
+
+        public static void RestoreColors() {
+            if (originalColors == null) return;
+            PSConsoleReadLine.SetOptions(new SetPSReadLineOption { Colors = originalColors });
+            originalColors = null;
+        }
+
+        private static HashSet<string> Names(IEnumerable<CommandInfo> commands, bool moduleOnly) {
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var command in commands) {
                 if (moduleOnly && (command.Module == null || String.IsNullOrEmpty(command.Module.Path))) continue;
-                if (command is FunctionInfo && command.Module != null && !command.Module.ExportedFunctions.ContainsKey(command.Name)) continue;
+                // An unloaded module's metadata can have no ExportedFunctions
+                // dictionary yet. Get-Command already limits that metadata to
+                // exports; filter private functions only for a loaded module.
+                if (command is FunctionInfo && command.Module != null && command.Module.SessionState != null && !command.Module.ExportedFunctions.ContainsKey(command.Name)) continue;
                 if (command is AliasInfo alias) {
                     try { if (alias.ResolvedCommand == null) continue; } catch { continue; }
                 }
@@ -63,10 +98,52 @@ namespace OhMyRushell {
         }
 
         public static void SetAvailableCommands(CommandInfo[] commands) {
-            Volatile.Write(ref available, Names(commands, true));
+            var names = Names(commands, true);
+            lock (availableLock) {
+                ++availableGeneration; // Manual refresh wins over older background work.
+                Volatile.Write(ref available, names);
+                availableReady = true;
+            }
         }
 
-        public static void UpdateSession(CommandInfo[] commands, string directory, string path, string pathExt) {
+        public static void StartAvailableDiscovery() {
+            lock (availableLock) {
+                if (availableReady || !availableTask.IsCompleted) return;
+                int generation = ++availableGeneration;
+                availableTask = Task.Run(() => {
+                    try {
+                        // Own runspace, public APIs, metadata discovery only. Never
+                        // evaluate input or access the interactive runspace here.
+                        using (var shell = PowerShell.Create(System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2())) {
+                            shell.AddCommand("Get-Command")
+                                .AddParameter("CommandType", CommandTypes.Cmdlet | CommandTypes.Function | CommandTypes.Filter)
+                                .AddParameter("All")
+                                .AddParameter("ErrorAction", ActionPreference.SilentlyContinue);
+                            var names = Names(shell.Invoke<CommandInfo>().ToArray(), true);
+                            lock (availableLock) {
+                                if (generation != availableGeneration) return;
+                                Volatile.Write(ref available, names);
+                                availableReady = true;
+                            }
+                        }
+                    } catch {
+                        // Discovery failure is unknown, not proof of absence.
+                        // Explicit Update-OhMyRushellCommandCache can recover.
+                    }
+                });
+            }
+        }
+
+        public static void UpdateSession(EngineIntrinsics context) {
+            // Same live session lookup as Get-Command -ListImported, without a
+            // PowerShell pipeline, array conversion or per-item PSObject wrapping.
+            UpdateSession(context.InvokeCommand.GetCommands("*",
+                CommandTypes.Alias | CommandTypes.Function | CommandTypes.Filter | CommandTypes.Cmdlet, true),
+                context.SessionState.Path.CurrentFileSystemLocation.ProviderPath,
+                Environment.GetEnvironmentVariable("PATH"), Environment.GetEnvironmentVariable("PATHEXT"));
+        }
+
+        public static void UpdateSession(IEnumerable<CommandInfo> commands, string directory, string path, string pathExt) {
             Volatile.Write(ref session, Names(commands, false));
             cwd = directory;
             var dirs = (path ?? "").Split(Path.PathSeparator).Where(p => !String.IsNullOrWhiteSpace(p)).Select(p => {
@@ -119,7 +196,9 @@ namespace OhMyRushell {
         public static void InvalidatePathIndex() { lock (indexLock) { signature = null; } }
 
         public static bool WaitForIndex(int milliseconds) {
-            try { return indexTask.Wait(milliseconds) && indexReady; } catch { return false; }
+            try {
+                return Task.WaitAll(new[] { indexTask, availableTask }, milliseconds) && indexReady && availableReady;
+            } catch { return false; }
         }
 
         public static CommandValidity Classify(string name) {
@@ -146,8 +225,9 @@ namespace OhMyRushell {
                 return CommandValidity.Pending;
             }
             // A rebuilding PATH index is unknown, not proof that a command exists.
-            if (!indexReady) return CommandValidity.Pending;
-            return Volatile.Read(ref external).Contains(name) ? CommandValidity.Valid : CommandValidity.Invalid;
+            if (indexReady && Volatile.Read(ref external).Contains(name)) return CommandValidity.Valid;
+            if (!indexReady || !availableReady) return CommandValidity.Pending;
+            return CommandValidity.Invalid;
         }
 
         private static CommandMark[] AnalyzeAst(Ast ast) {
@@ -202,14 +282,18 @@ namespace OhMyRushell {
             var keys = new HashSet<string>(StringComparer.Ordinal);
             for (int ch = 32; ch <= 126; ch++) keys.Add(((char)ch).ToString());
             foreach (var handler in PSConsoleReadLine.GetKeyHandlers(true, false)) if (allowed.Contains(handler.Function)) keys.Add(handler.Key);
+            var actions = new Dictionary<string, Action<ConsoleKeyInfo?, object>>(StringComparer.Ordinal);
             foreach (string key in keys) {
                 try {
                     var previous = PSConsoleReadLine.GetKeyHandlers(new[] { key }).FirstOrDefault();
                     string function = previous == null ? "SelfInsert" : previous.Function;
                     if (!allowed.Contains(function)) continue; // Never replace a user's custom handler.
-                    MethodInfo method = typeof(PSConsoleReadLine).GetMethod(function, new[] { typeof(ConsoleKeyInfo?), typeof(object) });
-                    if (method == null) continue;
-                    var action = (Action<ConsoleKeyInfo?, object>)Delegate.CreateDelegate(typeof(Action<ConsoleKeyInfo?, object>), method);
+                    if (!actions.TryGetValue(function, out var action)) {
+                        MethodInfo method = typeof(PSConsoleReadLine).GetMethod(function, new[] { typeof(ConsoleKeyInfo?), typeof(object) });
+                        if (method == null) continue;
+                        action = (Action<ConsoleKeyInfo?, object>)Delegate.CreateDelegate(typeof(Action<ConsoleKeyInfo?, object>), method);
+                        actions[function] = action;
+                    }
                     var binding = new Binding { Key = key, Function = previous == null ? null : function, Description = previous == null ? null : previous.Description, Original = action };
                     PSConsoleReadLine.SetKeyHandler(new[] { key }, (pressed, arg) => { action(pressed, arg); Paint(); }, BindingName, "Highlight existing commands without running them.");
                     bindings.Add(binding);

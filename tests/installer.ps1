@@ -95,6 +95,14 @@ try {
     Assert ($LASTEXITCODE -eq 0) 'Atualizacao com o modulo carregado falhou.'
 
     $beforeFailure = (Get-FileHash -LiteralPath $manifest).Hash
+    $nativeSource = Join-Path $fixture 'powershell/Native.cs'
+    $validNativeSource = [IO.File]::ReadAllText($nativeSource)
+    [IO.File]::WriteAllText($nativeSource, 'deliberately invalid C#')
+    $failed = $false
+    try { & $installer -NoBuild -Destination $destination } catch { $failed = $true }
+    Assert $failed 'Compiler failure was accepted.'
+    Assert ((Get-FileHash -LiteralPath $manifest).Hash -eq $beforeFailure) 'Compiler failure changed the active manifest.'
+    [IO.File]::WriteAllText($nativeSource, $validNativeSource)
     Remove-Item -LiteralPath (Join-Path $fixture 'powershell/Listing.ps1')
     $failed = $false
     try { & $installer -NoBuild -Destination $destination } catch { $failed = $true }

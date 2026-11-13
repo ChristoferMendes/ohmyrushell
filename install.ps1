@@ -43,7 +43,7 @@ $Destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFrom
 $libraryName = if ($IsWindows) { 'ohmyrushell_core.dll' } elseif ($IsMacOS) { 'libohmyrushell_core.dylib' } else { 'libohmyrushell_core.so' }
 $library = Join-Path $PSScriptRoot "target/release/$libraryName"
 $sourceDirectory = Join-Path $PSScriptRoot 'powershell'
-foreach ($required in @('ohmyrushell.psd1', 'ohmyrushell.psm1', 'Listing.ps1', 'CommandHighlighting.ps1', 'CommandHighlighting.cs')) {
+foreach ($required in @('ohmyrushell.psd1', 'ohmyrushell.psm1', 'AssemblyCache.ps1', 'PrepareAssemblies.ps1', 'Native.cs', 'Listing.ps1', 'CommandHighlighting.ps1', 'CommandHighlighting.cs')) {
     if (-not (Test-Path -LiteralPath (Join-Path $sourceDirectory $required) -PathType Leaf)) {
         throw "Arquivo do modulo ausente: $required. Use um clone completo do repositorio."
     }
@@ -94,12 +94,24 @@ if (-not $NoBuild) {
 }
 
 if (-not (Test-Path -LiteralPath $library -PathType Leaf)) { throw "Biblioteca nao encontrada: $library. Compile para a mesma plataforma/arquitetura do PowerShell, sem CARGO_BUILD_TARGET de cross-compilacao." }
-Write-Host '[2/3] Publicando modulo (releases anteriores serao preservadas)...'
+Write-Host '[2/3] Preparando pontes .NET e publicando modulo...'
+# Ship compiled bridges, not just a warmed user cache. A new shell need not
+# compile even after the cache is cleared. Another runtime falls back to source.
+$shell = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+$metadataPath = [IO.Path]::GetTempFileName()
+try {
+    & $shell -NoLogo -NoProfile -NonInteractive -File (Join-Path $sourceDirectory 'PrepareAssemblies.ps1') -OutputPath $metadataPath
+    if ($LASTEXITCODE -ne 0) { throw 'Falha ao compilar as pontes .NET. A instalacao anterior foi preservada.' }
+    $managed = [IO.File]::ReadAllText($metadataPath) | ConvertFrom-Json
+} finally {
+    [IO.File]::Delete($metadataPath)
+}
 
 # Content-address the complete module, not just its DLL. Loaded releases are
 # immutable: Windows can keep any previous library mapped without blocking updates.
 $files = @(
     [pscustomobject]@{ Source = $library; Relative = "native/$libraryName"; Hash = (Get-FileHash -LiteralPath $library -Algorithm SHA256).Hash }
+    [pscustomobject]@{ Source = $managed.Source; Relative = $managed.Relative; Hash = (Get-FileHash -LiteralPath $managed.Source -Algorithm SHA256).Hash }
     foreach ($file in Get-ChildItem -LiteralPath $sourceDirectory -File | Where-Object { $_.Extension -in @('.ps1', '.psm1', '.psd1', '.cs') }) {
         [pscustomobject]@{ Source = $file.FullName; Relative = $file.Name; Hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash }
     }
@@ -118,6 +130,7 @@ if (-not [IO.Directory]::Exists($releasePath)) {
         $null = [IO.Directory]::CreateDirectory((Join-Path $staging 'native'))
         foreach ($file in $files) {
             $target = Join-Path $staging $file.Relative
+            $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
             Copy-Item -LiteralPath $file.Source -Destination $target
             if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $file.Hash) {
                 throw 'Os arquivos do build mudaram durante a instalacao. Tente novamente.'
@@ -141,6 +154,14 @@ foreach ($file in $files) {
         throw "Release incompleta ou modificada: $releasePath. Nenhuma DLL em uso foi sobrescrita."
     }
 }
+
+# Validate in a fresh process BEFORE publishing. A loaded Native type,
+# PSReadLine settings and custom aliases in the caller are untouched.
+Write-Host 'Validando modulo em uma sessao isolada...'
+$releaseManifest = (Join-Path $releasePath 'ohmyrushell.psd1').Replace("'", "''")
+$prepare = '$ErrorActionPreference = ''Stop''; Import-Module ''' + $releaseManifest + ''' -ErrorAction Stop'
+& $shell -NoLogo -NoProfile -NonInteractive -Command $prepare
+if ($LASTEXITCODE -ne 0) { throw 'Falha ao preparar o modulo. O manifesto ativo anterior foi preservado.' }
 
 # Publish the stable entry point LAST with an atomic rename. Existing profiles
 # keep importing the same path; new sessions select the newly installed release.
