@@ -1,13 +1,10 @@
-# Contribuindo
+# Contributing
 
-Bugs, ideias e pull requests são bem-vindos. Para bugs, inclua plataforma,
-arquitetura, versões de PowerShell/Rust, passos de reprodução e a mensagem de
-erro, sem segredos ou caminhos privados desnecessários.
+Bug reports, ideas, and pull requests are welcome. For bug reports, include the platform, architecture, PowerShell/Rust versions, reproduction steps, and error message, without secrets or unnecessary private paths.
 
-## Ambiente local
+## Local setup
 
-Siga os [pré-requisitos do README](README.md#1-prepare-o-ambiente). Use Git,
-PowerShell 7.2+, Rust 1.88+ com `rustfmt`/`clippy` e um compilador C/linker.
+Follow the [README prerequisites](README.md#1-check-the-requirements). Use Git, PowerShell 7.2+, Rust 1.88+ with `rustfmt`/`clippy`, and a C compiler/linker.
 
 ```powershell
 rustup component add rustfmt clippy
@@ -15,23 +12,18 @@ rustup component add rustfmt clippy
 ./scripts/test.ps1
 ```
 
-O runner para imediatamente em caso de falha e executa cada teste PowerShell em
-um processo separado para isolar DLLs e alterações de prompt. Não instala nada
-no seu perfil: os testes do instalador usam diretórios e perfis descartáveis.
-O CI executa a mesma sequência no Windows, Linux e macOS.
+The runner stops immediately on failure and runs each PowerShell test in a separate process to isolate DLLs and prompt changes. It doesn't install anything into your profile: installer tests use disposable directories and profiles. CI runs the same sequence on Windows, Linux, and macOS.
 
-Para experimentar diretamente do checkout, sem instalar:
+To try directly from the checkout without installing:
 
 ```powershell
 cargo build --release --locked
 Import-Module ./powershell/ohmyrushell.psd1
 ```
 
-Feche essa sessão **antes de recompilar a DLL que ela carregou**. Para evitar
-esse bloqueio no fluxo diário, prefira `./install.ps1` e importe o módulo
-instalado em uma nova aba; as releases instaladas são imutáveis.
+Close that session **before rebuilding the DLL it loaded**. To avoid this lock during daily development, prefer `./install.ps1` and import the installed module in a new tab; installed releases are immutable.
 
-## Verificações individuais
+## Individual checks
 
 ```powershell
 cargo fmt --all --check
@@ -46,45 +38,29 @@ pwsh -NoProfile -File ./tests/startup.ps1
 pwsh -NoProfile -File ./tests/installer.ps1
 ```
 
-- Rust: parser, sanitização, FFI, staging, arquivos não rastreados, conflitos,
-  HEAD destacado, upstream, worktrees, ignores e caminhos Unicode/com espaços.
-  Compara o backend nativo com Git CLI e verifica que o índice não é regravado.
-- PowerShell: preservação de `$LASTEXITCODE`, cores, restauração do prompt/alias,
-  listagem, realce sem execução da entrada e instalação com DLLs bloqueadas.
-- Startup: imports frios concorrentes, cache compartilhado entre releases,
-  instalação sem compilação na primeira sessão mesmo com cache vazio, exports
-  de módulos sem executar código, aliases/cores/atalhos/predições preservados
-  e fallback sem PSReadLine.
-- Instalador: diagnóstico/simulação sem efeitos colaterais, reinstalação,
-  atualizações lado a lado, falhas e migração de perfil descartável.
+- Rust: parser, sanitization, FFI, staging, untracked files, conflicts, detached HEAD, upstream, worktrees, ignores, and Unicode/space-containing paths. Compares the native backend with the Git CLI and verifies that the index isn't rewritten.
+- PowerShell: `$LASTEXITCODE` preservation, colors, prompt/alias restoration, listing, highlighting without executing input, and installation with locked DLLs.
+- Startup: concurrent cold imports, cache shared across releases, installation without compilation on the first session even with an empty cache, module exports without executing code, preserved aliases/colors/shortcuts/predictions, and fallback without PSReadLine.
+- Installer: diagnostics/dry runs without side effects, reinstalls, side-by-side updates, failures, and disposable-profile migration.
 
-Teste interativo opcional no Windows, com Python 3 e sem pacotes extras:
+Optional interactive test on Windows, with Python 3 and no extra packages:
 
 ```powershell
 python ./tests/interactive_git.py
 ```
 
-Esse teste usa ConPTY para conferir edição real, cores, branch e exatamente um
-prompt fresco após `git clean -fd`. A limpeza ocorre apenas no repositório
-temporário do teste. O log fica em `target/interactive-output.log`.
+This test uses ConPTY to check real editing, colors, branch, and exactly one fresh prompt after `git clean -fd`. Cleanup happens only in the test's temporary repository. The log is written to `target/interactive-output.log`.
 
-## Medir desempenho
+## Measuring performance
 
 ```powershell
 pwsh -NoProfile -File ./tests/benchmark-git.ps1 -Path ./
-# Windows/ConPTY: primeiro prompt + primeiro input real, nativo vs customizado
+# Windows/ConPTY: first prompt + first real input, native vs customized
 python ./tests/benchmark-startup.py --iterations 15 --output target/startup.json
-# Comparação pareada adicional com um checkout/manifesto anterior:
-# --baseline-module C:/caminho/anterior/powershell/ohmyrushell.psd1
+# Additional paired comparison with an earlier checkout/manifest:
+# --baseline-module C:/previous/path/powershell/ohmyrushell.psd1
 ```
 
-O benchmark Git é somente leitura. O ConPTY usa uma pasta temporária vazia,
-sem perfis nem histórico, alterna a ordem das sessões e registra o primeiro run
-separadamente das amostras aquecidas. `index_check_ms` é a confirmação dos
-índices por um segundo comando (inclui edição/execução desse comando), não o
-instante exato da conclusão em background. Meça cold start, importação/compilação
-das pontes e prompt aquecido separadamente. Não trate uma medição local como garantia de
-latência ou comparação controlada com outros prompts.
+The Git benchmark is read-only. ConPTY uses an empty temporary folder, without profiles or history, alternates session order, and records the first run separately from warmed samples. `index_check_ms` is the index confirmation via a second command (including editing/executing that command), not the exact moment background work completes. Measure cold start, bridge import/compilation, and warmed prompts separately. Don't treat a local measurement as a latency guarantee or a controlled comparison with other prompts.
 
-Veja [a arquitetura](docs/architecture.md) antes de alterar cache/FFI, consulta
-Git, handlers de teclado ou publicação de releases do instalador.
+See [the architecture notes](docs/architecture.md) before changing the cache/FFI, Git queries, keyboard handlers, or installer release publishing.

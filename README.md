@@ -13,7 +13,7 @@ The look takes inspiration from Oh My Zsh and uses the Catppuccin Mocha palette.
 You don't need a Nerd Font, Powerline, a daemon, or a Node/Python runtime.
 
 ```text
-~/workspace/meu-projeto  git:(main) ✗ ↑2
+~/workspace/my-project  git:(main) ✗ ↑2
 ❯ git status
 ```
 
@@ -29,7 +29,7 @@ You don't need a Nerd Font, Powerline, a daemon, or a Node/Python runtime.
 
 ## Installation
 
-<a id="1-prepare-o-ambiente"></a>
+<a id="1-check-the-requirements"></a>
 
 ### 1. Check the requirements
 
@@ -182,7 +182,7 @@ pwsh -NoProfile -File ./tests/benchmark-git.ps1 -Path ./
 
 Extra features still have a cost: there's no promise to outperform an
 uncustomized shell. Compare median/p95 on the same machine, directory, and runtime.
-See the [local comparison and methodology](docs/startup-performance.md).
+See the [startup comparison and methodology](docs/startup-performance.md).
 
 ## Development
 

@@ -1,68 +1,47 @@
-# Medição de startup
+# Startup performance
 
 [← README](../README.md)
 
-## Comparação local
+## Local comparison
 
-Windows x64, PowerShell 7.7.0, ConPTY, mesmo Rust nativo e pasta temporária vazia
-fora de Git. Comparação com o código anterior à otimização (`c26136b`).
-15 amostras por cenário, com ordem alternada; primeiro run separado. Sem perfis,
-sem gravação de histórico e com predições desabilitadas **igualmente no benchmark**
-para reduzir interferência. O módulo não desliga predições na utilização normal.
+Windows x64, PowerShell 7.7.0, ConPTY, the same native Rust build, and an empty temporary folder outside Git. Compared with the code before optimization (`c26136b`). 15 samples per scenario, alternating order; first run measured separately. No profiles, no history recording, and predictions disabled **equally in the benchmark** to reduce interference. The module does not disable predictions during normal use.
 
-| Cenário | Primeiro prompt mediana / p95 | Primeiro input aceito mediana / p95 |
+| Scenario | First prompt median / p95 | First accepted input median / p95 |
 |---|---:|---:|
-| PowerShell nativo + PSReadLine | 270 / 302 ms | 315 / 347 ms |
-| ohmyrushell anterior, cache pronto | 425 / 463 ms | 467 / 498 ms |
-| ohmyrushell otimizado, instalado | 372 / 385 ms | 416 / 432 ms |
+| Native PowerShell + PSReadLine | 270 / 302 ms | 315 / 347 ms |
+| Previous ohmyrushell, cache ready | 425 / 463 ms | 467 / 498 ms |
+| Optimized ohmyrushell, installed | 372 / 385 ms | 416 / 432 ms |
 
-Redução da mediana do primeiro prompt: **12,5%**. O primeiro input aceito caiu
-**10,8%**, sem simplesmente imprimir um prompt antes de o editor estar usável.
-A confirmação dos índices por um segundo comando caiu de 499 para 448 ms; isso
-inclui digitar/executar a confirmação, não mede o instante exato da conclusão.
+The first-prompt median decreased by **12.5%**. The first accepted input decreased by **10.8%**, without simply printing a prompt before the editor was usable. Confirmation of the indexes with a second command dropped from 499 to 448 ms; this includes typing and executing the confirmation, and does not measure the exact completion time.
 
-O primeiro run anterior precisou compilar a ponte e levou **1.893 ms** até o
-prompt; o primeiro run instalado levou **387 ms**. Não são medições de disco/OS
-completamente frios. A eliminação do compilador na abertura é verificada também
-por teste funcional: cache vazio e compilação explicitamente proibida.
-Uma troca de runtime/PSReadLine pode exigir nova compilação (fallback).
+The previous version's first run had to compile the bridge and took **1,893 ms** to reach the prompt; the first installed run took **387 ms**. These are not completely cold disk/OS measurements. Avoiding the compiler at startup is also verified by a functional test: empty cache with compilation explicitly forbidden. A runtime/PSReadLine change may require recompilation (fallback).
 
-Em outra comparação, 300 prompts aquecidos na mesma pasta sem Git:
+In another comparison, 300 warmed prompts in the same folder outside Git:
 
-| Cenário | Mediana | p95 |
+| Scenario | Median | p95 |
 |---|---:|---:|
-| Anterior | 2,047 ms | 2,483 ms |
-| Otimizado | 0,785 ms | 1,037 ms |
+| Previous | 2.047 ms | 2.483 ms |
+| Optimized | 0.785 ms | 1.037 ms |
 
-A queda de **62%** vem principalmente de atualizar os comandos da sessão pela
-API pública em C#, sem pipeline/embrulhos PowerShell. O backend Git e a exigência
-de status fresco não foram substituídos por snapshots antigos.
+The **62%** reduction mainly comes from updating session commands through the public C# API, without a PowerShell pipeline/wrappers. The Git backend and requirement for fresh status were not replaced with stale snapshots.
 
-**Não superou o PowerShell sem customizações.** O trabalho extra ainda custa
-~102 ms até o primeiro prompt neste teste. Estes números locais não garantem
-latência em outra máquina, perfil, rede, runtime ou repositório grande.
+**It did not outperform uncustomized PowerShell.** The extra work still costs ~102 ms to the first prompt in this test. These local numbers don't guarantee latency on another machine, profile, network, runtime, or large repository.
 
-## Reproduzir
+## Reproducing
 
 ```powershell
 cargo build --release --locked
 ./install.ps1 -NoBuild -Destination ./target/startup-installed
 python ./tests/benchmark-startup.py --iterations 15 `
   --module ./target/startup-installed/ohmyrushell.psd1 `
-  --baseline-module C:/checkout-anterior/powershell/ohmyrushell.psd1 `
+  --baseline-module C:/checkout-before/powershell/ohmyrushell.psd1 `
   --output ./target/startup-comparison.json
 ```
 
-O checkout anterior também precisa ter sua biblioteca Rust release compilada.
-O JSON registra primeiro run, amostras e mediana/p95. Os perfis, aliases e
-histórico do usuário não são alterados. Para prompt aquecido:
+The previous checkout also needs its Rust release library built. The JSON records the first run, samples, and median/p95. User profiles, aliases, and history are not changed. For warmed prompts:
 
 ```powershell
-pwsh -NoProfile -File ./tests/benchmark-git.ps1 -Path C:/pasta-sem-git -Iterations 300
+pwsh -NoProfile -File ./tests/benchmark-git.ps1 -Path C:/folder-outside-git -Iterations 300
 ```
 
-Validação funcional: `./scripts/test.ps1` e, no Windows,
-`python ./tests/interactive_git.py`. Cobertura adicional em `tests/startup.ps1`:
-imports frios concorrentes, cache compartilhado entre releases, instalação sem
-compilador/cache, fallback sem PSReadLine, comandos de módulos não importados
-sem executar seu código, aliases, cores, handlers e predições preservados.
+Functional validation: `./scripts/test.ps1` and, on Windows, `python ./tests/interactive_git.py`. Additional coverage in `tests/startup.ps1`: concurrent cold imports, cache shared across releases, installation without a compiler/cache, fallback without PSReadLine, commands from modules not imported without executing their code, and preservation of aliases, colors, handlers, and predictions.

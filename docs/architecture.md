@@ -1,145 +1,83 @@
-# Arquitetura e limitações
+# Architecture and limitations
 
 [← README](../README.md)
 
-## Caminho do prompt
+## Prompt flow
 
-1. O módulo PowerShell captura `$?` antes de executar qualquer outra expressão e
-   preserva `$LASTEXITCODE`.
-2. Uma ponte C# chama a biblioteca Rust via P/Invoke, dentro do processo.
-3. Rust descobre o repositório e consulta branch, índice, alterações e upstream
-   usando git2/libgit2. Não inicia `git.exe`.
-4. O status fresco é renderizado uma única vez. Não há worker, loading, callback
-   de idle ou redesenho posterior.
+1. The PowerShell module captures `$?` before executing any other expression and preserves `$LASTEXITCODE`.
+2. A C# bridge calls the Rust library through P/Invoke, in-process.
+3. Rust discovers the repository and queries the branch, index, changes, and upstream using git2/libgit2. It doesn't start `git.exe`.
+4. Fresh status is rendered once. There is no worker, loading indicator, idle callback, or subsequent redraw.
 
-O índice é atualizado somente em memória: a consulta não regrava o índice do
-usuário. O cache de até 64 snapshots existe apenas para retries de buffer FFI,
-não para reaproveitar status antigo em prompts reais. O buffer .NET é reutilizado.
-Nomes exibidos têm caracteres de controle neutralizados para impedir injeção de
-sequências do terminal.
+The index is updated only in memory: the query does not rewrite the user's index. The cache of up to 64 snapshots exists only for FFI buffer retries, not to reuse stale status in actual prompts. The .NET buffer is reused. Displayed names have control characters neutralized to prevent terminal escape-sequence injection.
 
-A consulta é **síncrona**. Repositórios grandes, discos frios, filtros especiais e
-unidades de rede podem custar tempo: não há garantia de latência constante.
-Erros reais mostram `!` e a branch atual quando possível, nunca estado limpo
-inventado. Para diagnóstico:
+The query is **synchronous**. Large repositories, cold disks, special filters, and network drives can take time: constant latency isn't guaranteed. Actual errors show `!` and the current branch when possible, never fabricated clean status. For diagnostics:
 
 ```powershell
 ./target/release/ohmyrushell.exe git-status .
 ./target/release/ohmyrushell.exe preview
-./target/release/ohmyrushell.exe init  # Apenas imprime a importação
+./target/release/ohmyrushell.exe init  # Prints the import command only
 ```
 
-No Linux/macOS, retire `.exe`. A descoberta reconhece `.git` nos ancestrais e
-arquivos `gitdir:`, incluindo worktrees. Overrides avançados como `GIT_DIR` não
-são tratados. libgit2 não reproduz todas as extensões/filtros especiais da CLI.
-A implementação CLI em `src/git.rs` é uma referência para testes, não o backend
-do prompt ou do preview. Nenhum `fetch` é executado automaticamente.
+On Linux/macOS, omit `.exe`. Discovery recognizes `.git` in ancestor directories and `gitdir:` files, including worktrees. Advanced overrides such as `GIT_DIR` aren't handled. libgit2 doesn't reproduce all CLI extensions/special filters. The CLI implementation in `src/git.rs` is a test reference, not the prompt or preview backend. No `fetch` is run automatically.
 
-## Cache das pontes .NET
+## .NET bridge cache
 
-O instalador compila as pontes em um processo isolado e inclui o assembly em
-`native/managed/` da release imutável. Com PSReadLine, uma única DLL contém a
-ponte nativa e o realce. Abrir uma sessão não executa o compilador, mesmo com o
-cache do usuário vazio. As cores/teclas do processo que instala não são alteradas.
+The installer compiles the bridges in an isolated process and includes the assembly in `native/managed/` of the immutable release. With PSReadLine, a single DLL contains the native bridge and highlighting. Opening a session doesn't run the compiler, even with an empty user cache. Colors/keys in the installing process aren't changed.
 
-A identidade inclui a versão principal do .NET e as versões de PSReadLine e
-System.Management.Automation. Se essas versões mudarem, ou ao importar direto
-do checkout, a compilação acontece uma vez com publicação atômica no cache:
+The identity includes the .NET major version and the PSReadLine and System.Management.Automation versions. If these versions change, or when importing directly from the checkout, compilation runs once with atomic publication to the cache:
 
 - Windows: `%LOCALAPPDATA%/ohmyrushell/integration`;
-- Unix: `$XDG_CACHE_HOME/ohmyrushell/integration` ou `~/.cache/ohmyrushell/integration`.
+- Unix: `$XDG_CACHE_HOME/ohmyrushell/integration` or `~/.cache/ohmyrushell/integration`.
 
-`OHMYRUSHELL_CACHE_HOME` permite escolher outra raiz de cache (útil nos testes).
-A chave inclui código e runtime, **não o caminho da release**: atualizações de
-scripts não obrigam a recompilar a ponte. Um resolver público .NET seleciona a
-DLL Rust da release atual e continua proibindo trocar a DLL na mesma sessão.
-Sem PSReadLine, a ponte nativa funciona sozinha (`ohmyrushell/bridge`).
-Importação, compilação, primeiro input e prompt aquecido são custos distintos.
+`OHMYRUSHELL_CACHE_HOME` lets you choose another cache root (useful in tests). The key includes code and runtime, **not the release path**: script updates don't require recompiling the bridge. A public .NET resolver selects the current release's Rust DLL and continues to prohibit swapping the DLL within the same session. Without PSReadLine, the native bridge works by itself (`ohmyrushell/bridge`). Import, compilation, first input, and warmed prompt are distinct costs.
 
-## Validação de comandos
+## Command validation
 
-O PSReadLine sozinho trata qualquer nome como comando. A camada C# analisa a AST
-com APIs públicas, sem executar o texto digitado:
+PSReadLine alone treats any name as a command. The C# layer parses the AST using public APIs without executing the typed text:
 
-- verde: cmdlet, função, alias resolvível ou executável encontrado;
-- vermelho: nome ausente do índice atual;
-- neutro: índice carregando, caminho pendente ou invocação dinâmica (`& $cmd`).
+- green: a cmdlet, function, resolvable alias, or executable was found;
+- red: the name is absent from the current index;
+- neutral: the index is loading, a path is pending, or invocation is dynamic (`& $cmd`).
 
-Cada comando do pipeline é classificado separadamente. Argumentos não são
-validados como comandos: `git qualquer-coisa` verifica somente `git`.
-Não há `Get-Command`, processo externo ou varredura de PATH a cada tecla.
-Cmdlets/exports são descobertos em background em um runspace temporário próprio,
-sem bloquear o primeiro prompt e sem importar/executar os módulos descobertos.
-Funções/aliases da sessão são lidos a cada prompt pela API pública de comandos,
-sem pipeline PowerShell; nomes removidos não ficam em um cache persistente.
-PATH/PATHEXT são indexados em background quando mudam e, durante prompts, no
-máximo a cada 30 segundos. Enquanto qualquer descoberta está pendente, nomes
-não resolvidos ficam neutros, nunca vermelhos por ausência de informação.
-`Update-OhMyRushellCommandCache` continua fazendo o refresh explícito síncrono;
-sua resposta não é sobrescrita por uma descoberta antiga ainda em andamento.
-`WaitForIndex()` aguarda tanto o PATH quanto os exports. Caminhos explícitos são verificados em
-background; a cor muda na próxima edição, não em callbacks de idle.
+Each pipeline command is classified separately. Arguments aren't validated as commands: `git whatever` checks only `git`. There is no `Get-Command`, external process, or PATH scan on every keystroke. Cmdlets/exports are discovered in the background in a dedicated temporary runspace, without blocking the first prompt or importing/executing discovered modules. Session functions/aliases are read on each prompt through the public command API, without a PowerShell pipeline; removed names aren't retained in a persistent cache. PATH/PATHEXT are indexed in the background when changed and, during prompts, at most every 30 seconds. While any discovery is pending, unresolved names stay neutral, never red due to missing information. `Update-OhMyRushellCommandCache` still performs an explicit synchronous refresh; its result isn't overwritten by an older discovery still in progress. `WaitForIndex()` waits for both PATH and exports. Explicit paths are checked in the background; the color changes on the next edit, not via idle callbacks.
 
-O realce interativo cobre a edição padrão Windows/Emacs no ConsoleHost com VT,
-edição, histórico, conclusão e paste conhecidos. Preserva handlers personalizados
-e predições. Ao desativar, restaura somente handlers que ainda são seus.
-Modos/teclas não interceptados, incluindo Vi, mantêm o realce neutro. Seleções e
-entradas com erros sintáticos usam a renderização nativa.
+Interactive highlighting covers default Windows/Emacs editing in ConsoleHost with VT, editing, history, completion, and paste recognized. It preserves custom handlers and predictions. When disabled, it restores only handlers that still belong to it. Unhandled modes/keys, including Vi, keep neutral highlighting. Selections and syntactically invalid input use native rendering.
 
-## Listagem
+## Listing
 
-`ls` produz texto. Cores automáticas são desativadas em pipes/redirecionamentos e
-com `NO_COLOR`; `--color=always` é uma escolha explícita. `-a` inclui ocultos,
-mas não cria `.`/`..`. O modo exibido é o modo real do PowerShell, não permissões
-POSIX simuladas no Windows. Datas são locais e cores de executáveis usam
-extensões conhecidas. A largura de alguns emojis pode variar conforme o terminal.
+`ls` produces text. Automatic colors are disabled for pipes/redirection and with `NO_COLOR`; `--color=always` is an explicit choice. `-a` includes hidden entries but doesn't create `.`/`..`. The displayed mode is the actual PowerShell mode, not simulated POSIX permissions on Windows. Dates are local and executable colors use known extensions. The width of some emoji may vary by terminal.
 
 ```powershell
 ls --color=always
 ls -C --width=100
-ls './-nome.txt'
-ls '--' '-nome.txt'   # Aspas: PowerShell consome um -- sem aspas
+ls './-name.txt'
+ls '--' '-name.txt'   # Quote it: PowerShell consumes an unquoted --
 ```
 
-## Instalações imutáveis
+## Immutable installations
 
-O instalador calcula SHA-256 do módulo completo e da biblioteca nativa, copia
-para staging, verifica o conteúdo e publica `releases/<hash>/`. As pontes compiladas também
-participam do hash. O módulo é validado em outro processo antes de publicar o
-manifesto estável por último com rename atômico. Conteúdo idêntico é
-reutilizado sem regravar DLLs; releases antigas não são removidas automaticamente.
+The installer calculates SHA-256 for the complete module and native library, copies them to staging, verifies the contents, and publishes `releases/<hash>/`. Compiled bridges are also included in the hash. The module is validated in another process before publishing the stable manifest last via atomic rename. Identical content is reused without rewriting DLLs; old releases aren't removed automatically.
 
-Isso também permite migrar instalações antigas que tinham a DLL diretamente em
-`native/`. `Remove-Module` restaura prompt/alias, mas não descarrega a DLL do
-processo .NET. Atualizações passam a valer em novas sessões.
+This also supports migrating older installations that had the DLL directly in `native/`. `Remove-Module` restores the prompt/alias, but doesn't unload the DLL from the .NET process. Updates take effect in new sessions.
 
-`-Check` verifica arquivos, presença e versão do Rust (ou biblioteca existente
-com `-NoBuild`), mas não compila um programa para provar o compilador C/linker.
-`-WhatIf` não compila nem instala. O build do instalador usa explicitamente
-`target/` do projeto, independentemente de `CARGO_TARGET_DIR`; cross-compilação
-via `CARGO_BUILD_TARGET` não é suportada. Compile para a arquitetura do `pwsh`.
+`-Check` verifies files and the presence/version of Rust (or an existing library with `-NoBuild`), but doesn't compile a program to prove the C compiler/linker works. `-WhatIf` doesn't compile or install. The installer build explicitly uses the project's `target/`, regardless of `CARGO_TARGET_DIR`; cross-compilation via `CARGO_BUILD_TARGET` isn't supported. Compile for the `pwsh` architecture.
 
-### Migração de SwiftPrompt
+### Migrating from SwiftPrompt
 
-O projeto, executável e módulo agora se chamam **ohmyrushell**.
-`./install.ps1 -AddToProfile` substitui o import gerado anteriormente para
-SwiftPrompt ou um `Import-Module SwiftPrompt` simples. Faz backup do perfil em
-`$PROFILE.ohmyrushell.bak`, sem sobrescrever um backup existente.
-Imports arbitrários/customizados precisam ser ajustados manualmente.
-Sem `-AddToProfile`, nenhum perfil é modificado; o módulo antigo não é apagado.
+The project, executable, and module are now named **ohmyrushell**. `./install.ps1 -AddToProfile` replaces the previously generated SwiftPrompt import or a simple `Import-Module SwiftPrompt`. It backs up the profile to `$PROFILE.ohmyrushell.bak` without overwriting an existing backup. Arbitrary/custom imports must be adjusted manually. Without `-AddToProfile`, no profile is modified; the old module isn't deleted.
 
-A v0.5 substituiu o worker de `git status` por libgit2 em processo.
-`OHMYRUSHELL_GIT_WAIT_MS` foi aposentada e é ignorada, mesmo configurada como 0.
+v0.5 replaced the `git status` worker with in-process libgit2. `OHMYRUSHELL_GIT_WAIT_MS` has been retired and is ignored, even when set to 0.
 
-## Estrutura
+## Structure
 
 ```text
-src/git.rs          Backend libgit2 e referência CLI para testes
-src/service.rs      Consulta fresca e snapshots para retries FFI
-src/theme.rs        Tema, caminho e sanitização
-src/lib.rs          ABI C e renderização
-src/main.rs         Preview, init e diagnóstico
-powershell/         Módulo, PSReadLine e ls
-install.ps1         Build, instalação por usuário e perfil opt-in
-scripts/test.ps1    Verificação local equivalente ao CI
+src/git.rs          libgit2 backend and CLI reference for tests
+src/service.rs      Fresh queries and snapshots for FFI retries
+src/theme.rs        Theme, path, and sanitization
+src/lib.rs          C ABI and rendering
+src/main.rs         Preview, init, and diagnostics
+powershell/         Module, PSReadLine, and ls
+install.ps1         Build, per-user installation, and opt-in profile setup
+scripts/test.ps1    Local checks equivalent to CI
 ```
