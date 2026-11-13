@@ -1,0 +1,27 @@
+[package]
+name = "ohmyrushell"
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A minimal Rust-powered PowerShell prompt with in-process Git status, command highlighting and Linux-style ls"
+license = "MIT"
+repository = "https://github.com/ChristoferMendes/ohmyrushell"
+readme = "README.md"
+keywords = ["powershell", "prompt", "git", "terminal", "shell"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
+
+[lib]
+name = "ohmyrushell_core"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "ohmyrushell"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
