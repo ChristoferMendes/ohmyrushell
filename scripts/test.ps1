@@ -23,7 +23,7 @@ try {
     Invoke-Checked cargo @('test', '--locked')
     Invoke-Checked cargo @('build', '--release', '--locked', '--target-dir', (Join-Path $project 'target'))
     # Native DLLs cannot be unloaded; isolate each module test in a fresh process.
-    foreach ($test in @('installer-preflight', 'smoke', 'listing', 'highlighting', 'installer')) {
+    foreach ($test in @('installer-preflight', 'smoke', 'listing', 'highlighting', 'startup', 'installer')) {
         Invoke-Checked $shell @('-NoLogo', '-NoProfile', '-File', (Join-Path $project "tests/$test.ps1"))
     }
     Write-Host "`nTodas as verificacoes passaram." -ForegroundColor Green

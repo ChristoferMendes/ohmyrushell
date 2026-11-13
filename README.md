@@ -141,6 +141,34 @@ Somente o alias `ls` é trocado, e restaurado ao desativar o módulo. A saída �
 | Outra versão já carregada | Abra uma nova sessão; não há hot reload nativo. |
 | Git mostra `!` | Rode `./target/release/ohmyrushell.exe git-status .` (sem `.exe` no Unix). |
 
+## Inicialização e desempenho
+
+A instalação já compila e inclui as pontes .NET: a primeira aba não precisa
+abrir o compilador. A descoberta de comandos disponíveis roda em background;
+Git continua fresco e síncrono, com um único prompt, sem loading/redesenho.
+Cores, `ls`, aliases, atalhos personalizados e predições são preservados.
+Nomes ainda não resolvidos ficam neutros até a descoberta terminar.
+
+Para comparar no Windows com PSReadLine real, sem tocar no perfil/histórico:
+
+```powershell
+python ./tests/benchmark-startup.py --iterations 15 --output target/startup.json
+# Para medir uma instalação, acrescente: --module C:/caminho/ohmyrushell.psd1
+```
+
+O teste alterna sessões nativas e com todas as features habilitadas, mede o
+primeiro prompt e o primeiro input aceito, e verifica os índices depois.
+Não inclui configurações do seu perfil, zoxide ou tempo de abrir a janela do
+Windows Terminal. Para Git/prompt aquecido em qualquer plataforma:
+
+```powershell
+pwsh -NoProfile -File ./tests/benchmark-git.ps1 -Path ./
+```
+
+Ter mais features ainda tem custo: não há promessa de superar o shell sem
+customizações. Compare mediana/p95 na mesma máquina, pasta e runtime.
+Veja a [comparação local e metodologia](docs/startup-performance.md).
+
 ## Desenvolvimento
 
 ```powershell

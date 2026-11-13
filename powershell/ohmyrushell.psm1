@@ -2,127 +2,48 @@
 
 $script:Enabled = $false
 $script:OriginalPrompt = $null
-$script:OriginalColors = @{}
 $script:PromptBlock = $null
-. (Join-Path $PSScriptRoot 'Listing.ps1')
-. (Join-Path $PSScriptRoot 'CommandHighlighting.ps1')
+. (Join-Path $PSScriptRoot 'AssemblyCache.ps1')
+. "$PSScriptRoot/Listing.ps1"
+. "$PSScriptRoot/CommandHighlighting.ps1"
 $script:HighlightingReady = $false
+# Load PSReadLine once. When present, one cached assembly provides both bridges.
+$readLine = Get-Module PSReadLine
+if (-not $readLine -and (Get-Module -ListAvailable PSReadLine)) {
+    $readLine = Import-Module PSReadLine -PassThru -ErrorAction Stop
+}
 
 $libraryName = if ($IsWindows) { 'ohmyrushell_core.dll' } elseif ($IsMacOS) { 'libohmyrushell_core.dylib' } else { 'libohmyrushell_core.so' }
-$nativePath = Join-Path $PSScriptRoot "native/$libraryName"
-if (-not (Test-Path -LiteralPath $nativePath)) {
-    $nativePath = Join-Path (Split-Path $PSScriptRoot -Parent) "target/release/$libraryName"
+$nativePath = [IO.Path]::GetFullPath("$PSScriptRoot/native/$libraryName")
+if (-not [IO.File]::Exists($nativePath)) {
+    $nativePath = [IO.Path]::GetFullPath("$PSScriptRoot/../target/release/$libraryName")
 }
-if (-not (Test-Path -LiteralPath $nativePath)) {
+if (-not [IO.File]::Exists($nativePath)) {
     throw 'ohmyrushell: biblioteca Rust ausente. Execute ./install.ps1 ou cargo build --release.'
 }
-$nativePath = (Resolve-Path -LiteralPath $nativePath).ProviderPath
 
 if (-not ('OhMyRushell.Native' -as [type])) {
-    $escapedPath = $nativePath.Replace('"', '""')
-    $bridgeSource = @"
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
-
-namespace OhMyRushell {
-    public static class Native {
-        public const string LibraryPath = @"$escapedPath";
-        [ThreadStatic] private static byte[] buffer;
-
-        [DllImport(LibraryPath, EntryPoint = "ohmyrushell_render", CallingConvention = CallingConvention.Cdecl)]
-        private static extern UIntPtr RenderNative(
-            [In] byte[] path, UIntPtr pathLength, int success,
-            [Out] byte[] output, UIntPtr capacity);
-
-        [DllImport(LibraryPath, EntryPoint = "ohmyrushell_revision", CallingConvention = CallingConvention.Cdecl)]
-        public static extern ulong Revision();
-
-        public static string Render(string path, bool success) {
-            return Render(path, success, true);
-        }
-
-        public static string Render(string path, bool success, bool refresh) {
-            byte[] input = Encoding.UTF8.GetBytes(path);
-            if (buffer == null) buffer = new byte[4096];
-            for (int attempt = 0; attempt < 3; attempt++) {
-                ulong size = RenderNative(input, (UIntPtr)input.Length, (success ? 1 : 0) | (refresh && attempt == 0 ? 0 : 2),
-                    buffer, (UIntPtr)buffer.Length).ToUInt64();
-                if (size == 0 || size > 1048576) throw new InvalidOperationException("Native rendering failed.");
-                if (size <= (ulong)buffer.Length) return Encoding.UTF8.GetString(buffer, 0, (int)size);
-                buffer = new byte[checked((int)size + 4096)];
-            }
-            throw new InvalidOperationException("Native prompt exceeds its buffer.");
-        }
-    }
-}
-"@
-    # Compile once per source/native path/.NET runtime, not once per shell.
-    $cacheRoot = if ($IsWindows) {
-        [Environment]::GetFolderPath('LocalApplicationData')
-    } elseif ($env:XDG_CACHE_HOME) {
-        $env:XDG_CACHE_HOME
+    $bridgePath = if ($readLine) {
+        Get-OhMyRushellAssembly -Source @("$PSScriptRoot/Native.cs", "$PSScriptRoot/CommandHighlighting.cs") -Kind integration -ReadLine
     } else {
-        Join-Path $HOME '.cache'
-    }
-    $cacheDirectory = Join-Path $cacheRoot 'ohmyrushell/bridge'
-    $null = [IO.Directory]::CreateDirectory($cacheDirectory)
-    $hashInput = [Text.Encoding]::UTF8.GetBytes("$([Environment]::Version.Major)`n$bridgeSource")
-    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($hashInput))
-    $bridgePath = Join-Path $cacheDirectory "$hash.dll"
-    if (-not [IO.File]::Exists($bridgePath)) {
-        $temporary = Join-Path $cacheDirectory "$([Guid]::NewGuid()).dll"
-        try {
-            Add-Type -TypeDefinition $bridgeSource -OutputAssembly $temporary -ErrorAction Stop
-            try {
-                [IO.File]::Move($temporary, $bridgePath)
-            } catch [IO.IOException] {
-                # A second shell may have published the same assembly first.
-                if (-not [IO.File]::Exists($bridgePath)) { throw }
-            }
-        } finally {
-            if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
-        }
+        Get-OhMyRushellAssembly -Source "$PSScriptRoot/Native.cs" -Kind bridge
     }
     Add-Type -LiteralPath $bridgePath -ErrorAction Stop
-} elseif (-not [OhMyRushell.Native].GetMethod('Revision')) {
+} elseif (-not [OhMyRushell.Native].GetMethod('Initialize')) {
     throw 'Uma ponte ohmyrushell antiga esta carregada. Abra uma nova sessao para atualizar.'
-} elseif ([OhMyRushell.Native]::LibraryPath -ne $nativePath) {
+} elseif ([OhMyRushell.Native]::LibraryPath -and [OhMyRushell.Native]::LibraryPath -ne $nativePath) {
     throw 'ohmyrushell ja foi carregado de outra pasta. Abra uma nova sessao para trocar a biblioteca.'
 }
+
+[OhMyRushell.Native]::Initialize($nativePath)
 
 function Enable-OhMyRushell {
     [CmdletBinding()]
     param()
     if ($script:Enabled) { return }
 
-    $script:OriginalPrompt = (Get-Item Function:\prompt -ErrorAction SilentlyContinue).ScriptBlock
-    if ((Get-Module PSReadLine) -or (Get-Module -ListAvailable PSReadLine)) {
-        Import-Module PSReadLine -ErrorAction Stop
-        $options = Get-PSReadLineOption
-        $properties = @{
-            Command = 'CommandColor'; Parameter = 'ParameterColor'; String = 'StringColor'
-            Variable = 'VariableColor'; Number = 'NumberColor'; Operator = 'OperatorColor'
-            Comment = 'CommentColor'; Keyword = 'KeywordColor'; Error = 'ErrorColor'
-            ContinuationPrompt = 'ContinuationPromptColor'
-        }
-        foreach ($entry in $properties.GetEnumerator()) {
-            $script:OriginalColors[$entry.Key] = $options.($entry.Value)
-        }
-        # A neutral baseline never claims that an unresolved name is valid.
-        # The lightweight C# highlighter repaints only resolved command spans.
-        Set-PSReadLineOption -Colors @{
-            Command = '#cdd6f4'; Parameter = '#89b4fa'; String = '#f9e2af'
-            Variable = '#cba6f7'; Number = '#fab387'; Operator = '#89dceb'
-            Comment = '#6c7086'; Keyword = '#cba6f7'; Error = '#f38ba8'
-            ContinuationPrompt = '#6c7086'
-        }
-        try { Initialize-OhMyRushellHighlighting }
-        catch {
-            Set-PSReadLineOption -Colors $script:OriginalColors
-            throw
-        }
-    }
+    $script:OriginalPrompt = ${function:prompt}
+    if ($readLine) { Initialize-OhMyRushellHighlighting }
 
     function global:prompt {
         # Capture $? BEFORE running any other expression.
@@ -142,7 +63,7 @@ function Enable-OhMyRushell {
             $global:LASTEXITCODE = $savedExitCode
         }
     }
-    $script:PromptBlock = (Get-Item Function:\prompt).ScriptBlock
+    $script:PromptBlock = ${function:prompt}
     Enable-OhMyRushellListing
     $script:Enabled = $true
 }
@@ -154,17 +75,13 @@ function Disable-OhMyRushell {
     Disable-OhMyRushellHighlighting
     Disable-OhMyRushellListing
     # Do not overwrite a different prompt installed after ours.
-    if ((Get-Item Function:\prompt -ErrorAction SilentlyContinue).ScriptBlock -eq $script:PromptBlock) {
+    if (${function:prompt} -eq $script:PromptBlock) {
         if ($script:OriginalPrompt) {
             Set-Item Function:\global:prompt -Value $script:OriginalPrompt
         } else {
             Remove-Item Function:\global:prompt -ErrorAction SilentlyContinue
         }
     }
-    if ($script:OriginalColors.Count -gt 0 -and (Get-Module PSReadLine)) {
-        Set-PSReadLineOption -Colors $script:OriginalColors
-    }
-    $script:OriginalColors = @{}
     $script:Enabled = $false
 }
 
