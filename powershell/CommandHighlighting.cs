@@ -261,7 +261,10 @@ namespace OhMyRushell {
                 restore = true;
                 foreach (var mark in marks) {
                     PSConsoleReadLine.SetCursorPosition(mark.Start);
-                    Console.Write((mark.Validity == CommandValidity.Valid ? Green : mark.Validity == CommandValidity.Invalid ? Red : Neutral) + mark.Text + "\x1b[0m");
+                    // PSReadLine tracks the cursor position independently of
+                    // Console.Write. Restore the physical cursor before asking
+                    // it to move again, or each repaint drifts across the line.
+                    Console.Write("\x1b[s" + (mark.Validity == CommandValidity.Valid ? Green : mark.Validity == CommandValidity.Invalid ? Red : Neutral) + mark.Text + "\x1b[0m\x1b[u");
                 }
             } catch { /* A highlighter must never break editing or run user code. */ }
             finally {
